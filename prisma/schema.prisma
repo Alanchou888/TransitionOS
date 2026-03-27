@@ -1,0 +1,218 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  EMPLOYEE
+  MANAGER
+  SUCCESSOR
+  MENTOR
+}
+
+enum TaskType {
+  HANDOVER
+  ONBOARDING
+  BOTH
+}
+
+enum TaskStatus {
+  DRAFT
+  INGESTING
+  GENERATED
+  IN_REVIEW
+  CHANGES_REQUESTED
+  APPROVED
+  EXPORTED
+}
+
+enum DocStatus {
+  DRAFT
+  IN_REVIEW
+  CHANGES_REQUESTED
+  APPROVED
+}
+
+enum SourceType {
+  GITHUB_REPO
+  GITHUB_ISSUE
+  NOTION_PAGE
+  SLACK_MESSAGE
+  JIRA_ISSUE
+}
+
+enum ApprovalDecision {
+  APPROVE
+  REJECT
+}
+
+enum JobStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
+model User {
+  id          String           @id @default(cuid())
+  name        String
+  email       String           @unique
+  role        Role
+  department  String?
+  createdAt   DateTime         @default(now())
+  ownedTasks  TransitionTask[] @relation("TaskOwner")
+  approvals   Approval[]
+  logs        AuditLog[]
+}
+
+model TransitionTask {
+  id               String           @id @default(cuid())
+  type             TaskType
+  ownerUserId      String
+  targetRole       String
+  successorUserId  String?
+  dateFrom         DateTime
+  dateTo           DateTime
+  sourceSelection  Json?
+  status           TaskStatus       @default(DRAFT)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  owner            User             @relation("TaskOwner", fields: [ownerUserId], references: [id])
+  sourceItems      SourceItem[]
+  handoverDrafts   HandoverDraft[]
+  onboardingPacks  OnboardingPack[]
+  approvals        Approval[]
+  jobs             GenerationJob[]
+  logs             AuditLog[]
+}
+
+model SourceConnection {
+  id         String   @id @default(cuid())
+  type       SourceType
+  configJson Json
+  enabled    Boolean  @default(true)
+  createdBy  String
+  createdAt  DateTime @default(now())
+}
+
+model SourceItem {
+  id               String         @id @default(cuid())
+  transitionTaskId String
+  sourceType       SourceType
+  sourceObjectId   String
+  title            String
+  url              String?
+  author           String?
+  createdAtSource  DateTime?
+  rawContent       String
+  metadataJson     Json
+  task             TransitionTask @relation(fields: [transitionTaskId], references: [id], onDelete: Cascade)
+  citations        Citation[]
+
+  @@index([transitionTaskId])
+}
+
+model HandoverDraft {
+  id               String         @id @default(cuid())
+  transitionTaskId String
+  version          Int
+  contentMarkdown  String
+  structuredJson   Json
+  status           DocStatus      @default(DRAFT)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  task             TransitionTask @relation(fields: [transitionTaskId], references: [id], onDelete: Cascade)
+  citations        Citation[]
+
+  @@unique([transitionTaskId, version])
+}
+
+model OnboardingPack {
+  id               String         @id @default(cuid())
+  transitionTaskId String
+  version          Int
+  contentMarkdown  String
+  structuredJson   Json
+  status           DocStatus      @default(DRAFT)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  task             TransitionTask @relation(fields: [transitionTaskId], references: [id], onDelete: Cascade)
+  citations        Citation[]
+  checklistItems   ChecklistItem[]
+
+  @@unique([transitionTaskId, version])
+}
+
+model Citation {
+  id               String     @id @default(cuid())
+  documentType     String
+  documentId       String
+  sectionKey       String
+  sourceItemId     String
+  excerpt          String
+  confidenceScore  Float?
+  createdAt        DateTime   @default(now())
+  sourceItem       SourceItem @relation(fields: [sourceItemId], references: [id], onDelete: Cascade)
+  handoverDraft    HandoverDraft? @relation(fields: [handoverDraftId], references: [id], onDelete: Cascade)
+  handoverDraftId  String?
+  onboardingPack   OnboardingPack? @relation(fields: [onboardingPackId], references: [id], onDelete: Cascade)
+  onboardingPackId String?
+
+  @@index([documentType, documentId])
+}
+
+model ChecklistItem {
+  id               String         @id @default(cuid())
+  onboardingPackId String
+  section          String
+  title            String
+  description      String
+  priority         Int            @default(2)
+  completedBy      String?
+  completedAt      DateTime?
+  mentorNote       String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  onboardingPack   OnboardingPack @relation(fields: [onboardingPackId], references: [id], onDelete: Cascade)
+}
+
+model Approval {
+  id               String           @id @default(cuid())
+  transitionTaskId String
+  approverUserId   String
+  decision         ApprovalDecision
+  comment          String?
+  createdAt        DateTime         @default(now())
+  task             TransitionTask   @relation(fields: [transitionTaskId], references: [id], onDelete: Cascade)
+  approver         User             @relation(fields: [approverUserId], references: [id])
+}
+
+model AuditLog {
+  id               String          @id @default(cuid())
+  transitionTaskId String?
+  actorUserId      String?
+  action           String
+  detailsJson      Json
+  createdAt        DateTime        @default(now())
+  task             TransitionTask? @relation(fields: [transitionTaskId], references: [id], onDelete: SetNull)
+  actor            User?           @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+}
+
+model GenerationJob {
+  id               String         @id @default(cuid())
+  transitionTaskId String
+  status           JobStatus      @default(QUEUED)
+  error            String?
+  attempts         Int            @default(0)
+  runAfter         DateTime       @default(now())
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  task             TransitionTask @relation(fields: [transitionTaskId], references: [id], onDelete: Cascade)
+
+  @@index([status, runAfter])
+}
